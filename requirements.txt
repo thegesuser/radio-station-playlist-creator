@@ -1,0 +1,4 @@
+deezer-python
+beautifulsoup4~=4.12.2
+requests~=2.23.0
+python-dotenv~=0.21.0
