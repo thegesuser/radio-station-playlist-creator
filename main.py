@@ -2,6 +2,7 @@ import fileinput
 import json
 import os
 import sqlite3
+from typing import List
 
 import deezer
 import requests
@@ -22,7 +23,7 @@ cur.execute("CREATE TABLE IF NOT EXISTS properties (prop_name VARCHAR(255) PRIMA
 def read_dlf_nova_tracks():
     page = requests.get("https://www.deutschlandfunknova.de/playlist")
     soup = BeautifulSoup(page.content, "html.parser")
-    tracks: ResultSet[PageElement] = soup.find_all('figcaption', class_='playlist__title')[:10]
+    tracks: ResultSet[PageElement] = soup.find_all('figcaption', class_='playlist__title')[:150]
 
     print("done parsing dlf playlist. found {} tracks".format(len(tracks)))
 
@@ -35,26 +36,43 @@ def read_dlf_nova_tracks():
     return unique_tracks
 
 
+def comma_separated_list(p_list):
+    return ",".join(map(str, p_list))
+
+
 def get_auth_token():
     db_token = cur.execute("SELECT prop_val FROM properties WHERE prop_name = 'token'").fetchone()
-    if db_token[0] is not None:
+    if db_token is not None:
         return db_token[0]
 
     print(
-        f"Please open https://connect.deezer.com/oauth/auth.php?app_id={app_Id}&redirect_uri={redirect_uri}&perms=basic_access,email,manage_library,offline_access")
+        f"Please open https://connect.deezer.com/oauth/auth.php?app_id={app_Id}&redirect_uri={redirect_uri}&perms=basic_access,email,manage_library,delete_library,offline_access")
     print("Afterwards, please paste the code into this terminal")
     for line in fileinput.input():
         auth_params = {
             "app_id": app_Id,
             "secret": app_secret,
             "code": line.rstrip(),
-            "output": "json"
+            "output": "json",
         }
-        auth_response = requests.get('https://connect.deezer.com/oauth/access_token.php', params=auth_params)
-        new_token = json.loads(auth_response.content)['access_token']
+        auth_response = requests.get("https://connect.deezer.com/oauth/access_token.php", params=auth_params)
+        new_token = json.loads(auth_response.content)["access_token"]
         cur.execute("INSERT INTO properties VALUES ('token', '{}')".format(new_token))
         con.commit()
         return new_token
+
+
+def get_track_ids_in_playlist(playlist_id: str):
+    playlist = client.request("GET", f"playlist/{playlist_id}/tracks")
+    tracks = []
+    for track in playlist:
+        tracks.append(track.id)
+    return tracks
+
+
+def delete_tracks_from_playlist(playlist_id: str, track_ids: List[str]):
+    if len(track_ids) > 0:
+        client.request("DELETE", f"playlist/{playlist_id}/tracks", songs=comma_separated_list(track_ids))
 
 
 token = get_auth_token()
@@ -68,12 +86,14 @@ for singleTrack in read_dlf_nova_tracks():
         deezerTrackIds.add(result[0].id)
 
 playlist_id = cur.execute("SELECT prop_val FROM properties WHERE prop_name = 'playlist_id'").fetchone()
+
 if playlist_id is None:
     playlist_id = client.create_playlist("Deutschlandfunk Nova Playlist")
     cur.execute("INSERT INTO properties VALUES ('playlist_id', '{}')".format(playlist_id))
     con.commit()
 else:
     playlist_id = playlist_id[0]
+    trackIds = get_track_ids_in_playlist(playlist_id)
+    delete_tracks_from_playlist(playlist_id, trackIds)
 
-trackIds = ','.join(map(str, deezerTrackIds))
-client.request("POST", f"playlist/{playlist_id}/tracks", songs=trackIds)
+client.request("POST", f"playlist/{playlist_id}/tracks", songs=comma_separated_list(deezerTrackIds))
