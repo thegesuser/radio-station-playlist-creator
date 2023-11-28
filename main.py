@@ -5,6 +5,7 @@ import sqlite3
 from typing import List
 
 import deezer
+import numpy
 import requests
 from bs4 import BeautifulSoup, PageElement, ResultSet
 from dotenv import load_dotenv
@@ -78,7 +79,8 @@ def get_track_ids_in_playlist(playlist_id: str):
 
 def delete_tracks_from_playlist(playlist_id: str, track_ids: List[str]):
     if len(track_ids) > 0:
-        client.request("DELETE", f"playlist/{playlist_id}/tracks", songs=comma_separated_list(track_ids))
+        for chunk in numpy.array_split(numpy.array(track_ids), 10):
+            client.request("DELETE", f"playlist/{playlist_id}/tracks", songs=comma_separated_list(chunk))
 
 
 token = get_auth_token()
