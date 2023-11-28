@@ -63,10 +63,16 @@ def get_auth_token():
 
 
 def get_track_ids_in_playlist(playlist_id: str):
-    playlist = client.request("GET", f"playlist/{playlist_id}/tracks")
     tracks = []
-    for track in playlist:
-        tracks.append(track.id)
+    index = 0
+    while True:
+        playlist = client.request("GET", f"playlist/{playlist_id}/tracks?index={index}", paginate_list=True)
+        for track in playlist['data']:
+            tracks.append(track.id)
+        if 'next' in playlist.keys():
+            index += 25
+        else:
+            break
     return tracks
 
 
