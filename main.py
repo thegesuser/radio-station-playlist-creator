@@ -131,8 +131,8 @@ token = get_auth_token()
 client = deezer.Client(access_token=token)
 
 # search for deezer track ids using the parsed results and update
-# dlf_nova_track_ids = find_deezer_track_ids(read_dlf_nova_tracks())
-# update_playlist("Deutschlandfunk Nova Playlist", 'dlf_nova_playlist_id', dlf_nova_track_ids)
+dlf_nova_track_ids = find_deezer_track_ids(read_dlf_nova_tracks())
+update_playlist("Deutschlandfunk Nova Playlist", 'dlf_nova_playlist_id', dlf_nova_track_ids)
 
 einslive_track_ids = find_deezer_track_ids(read_einslive_plan_b_tracks())
 update_playlist("1LIVE Plan B Playlist", 'einslive_plan_b_playlist_id', einslive_track_ids)
