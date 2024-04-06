@@ -38,22 +38,29 @@ def read_dlf_nova_tracks():
 
 
 def read_einslive_plan_b_tracks():
-    page = requests.get("https://www1.wdr.de/radio/1live/musik/1live-plan-b/plan-b-donnerstagssendung-100.html")
-    soup = BeautifulSoup(page.content, "html.parser")
-    tracks: ResultSet[PageElement] = soup.find_all('tr', class_='data')
-
-    print("done parsing einslive playlist. found {} rows".format(len(tracks)))
+    pages = [
+        'https://www1.wdr.de/radio/1live/musik/1live-plan-b/plan-b-montagssendung-100.html',
+        'https://www1.wdr.de/radio/1live/musik/1live-plan-b/plan-b-dienstagssendung-100.html',
+        'https://www1.wdr.de/radio/1live/musik/1live-plan-b/plan-b-mittwochssendung-100.html',
+        'https://www1.wdr.de/radio/1live/musik/1live-plan-b/plan-b-donnerstagssendung-100.html'
+    ]
 
     # As radio stations repeat tracks, we only care for unique tracks
     unique_tracks = set()
-    for single_track in tracks:
-        single_row = single_track.find_all('td', class_='entry')
-        artist = single_row[0].text
-        title = single_row[1].text
-        if (artist == 'Interpret' or title == 'Titel') or (artist == '' or title == ''):
-            # filter out headers and dividers
-            continue
-        unique_tracks.add((title, artist))
+    for show in pages:
+        page = requests.get(show)
+        soup = BeautifulSoup(page.content, "html.parser")
+        tracks: ResultSet[PageElement] = soup.find_all('tr', class_='data')
+        print("done parsing einslive playlist. found {} rows".format(len(tracks)))
+
+        for single_track in tracks:
+            single_row = single_track.find_all('td', class_='entry')
+            artist = single_row[0].text
+            title = single_row[1].text
+            if (artist == 'Interpret' or title == 'Titel') or (artist == '' or title == ''):
+                # filter out headers and dividers
+                continue
+            unique_tracks.add((title, artist))
     return unique_tracks
 
 
@@ -131,8 +138,8 @@ token = get_auth_token()
 client = deezer.Client(access_token=token)
 
 # search for deezer track ids using the parsed results and update
-dlf_nova_track_ids = find_deezer_track_ids(read_dlf_nova_tracks())
-update_playlist("Deutschlandfunk Nova Playlist", 'dlf_nova_playlist_id', dlf_nova_track_ids)
+#dlf_nova_track_ids = find_deezer_track_ids(read_dlf_nova_tracks())
+#update_playlist("Deutschlandfunk Nova Playlist", 'dlf_nova_playlist_id', dlf_nova_track_ids)
 
 einslive_track_ids = find_deezer_track_ids(read_einslive_plan_b_tracks())
 update_playlist("1LIVE Plan B Playlist", 'einslive_plan_b_playlist_id', einslive_track_ids)
