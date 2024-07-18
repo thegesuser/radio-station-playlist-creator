@@ -1,5 +1,5 @@
-deezer-python
+deezer-python~=7.0.0
 beautifulsoup4~=4.12.2
-requests~=2.23.0
+requests~=2.32.3
 python-dotenv~=0.21.0
 numpy

@@ -1,6 +1,7 @@
 import fileinput
 import json
 import os
+import re
 import sqlite3
 from typing import List
 
@@ -113,8 +114,10 @@ def delete_tracks_from_playlist(playlist_id: str, track_ids: List[str]):
 def find_deezer_track_ids(parsed_tracks: set):
     return_value = set()
     for single_track in parsed_tracks:
-        deezer_search_result: deezer.PaginatedList[deezer.Track] = client.search(track=single_track[0],
-                                                                                 artist=single_track[1],
+        quasi_sanitized_track = re.sub('[!?&]', '', single_track[0])
+        quasi_sanitized_artist = re.sub('[!?&]', '', single_track[1])
+        deezer_search_result: deezer.PaginatedList[deezer.Track] = client.search(track=quasi_sanitized_track,
+                                                                                 artist=quasi_sanitized_artist,
                                                                                  strict=True)
         if len(deezer_search_result) > 0:
             return_value.add(deezer_search_result[0].id)
@@ -125,13 +128,16 @@ def update_playlist(playlist_name: str, prop_name: str, track_ids: set):
     playlist_id = cur.execute("SELECT prop_val FROM properties WHERE prop_name = '{}'".format(prop_name)).fetchone()
     if playlist_id is None:
         playlist_id = client.create_playlist(playlist_name)
+        playlist_object: deezer.Playlist = client.get_playlist(playlist_id)
         cur.execute("INSERT INTO properties VALUES ('{}', '{}')".format(prop_name, playlist_id))
         con.commit()
     else:
         playlist_id = playlist_id[0]
         track_ids_to_delete = get_track_ids_in_playlist(playlist_id)
-        delete_tracks_from_playlist(playlist_id, track_ids_to_delete)
-    client.request("POST", f"playlist/{playlist_id}/tracks", songs=comma_separated_list(track_ids))
+        playlist_object: deezer.Playlist = client.get_playlist(playlist_id)
+        playlist_object.delete_tracks(track_ids_to_delete)
+
+    playlist_object.add_tracks(track_ids)
 
 
 token = get_auth_token()
