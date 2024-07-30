@@ -1,8 +1,12 @@
 import json
 import os
+import re
 import sqlite3
 import time
+from typing import List
 
+import deezer
+import numpy
 import requests
 import tidalapi
 from authlib.integrations.requests_client import OAuth2Auth, OAuth2Session
@@ -39,6 +43,33 @@ def read_dlf_nova_tracks():
     return unique_tracks
 
 
+def read_einslive_plan_b_tracks():
+    pages = [
+        'https://www1.wdr.de/radio/1live/musik/1live-plan-b/plan-b-montagssendung-100.html',
+        'https://www1.wdr.de/radio/1live/musik/1live-plan-b/plan-b-dienstagssendung-100.html',
+        'https://www1.wdr.de/radio/1live/musik/1live-plan-b/plan-b-mittwochssendung-100.html',
+        'https://www1.wdr.de/radio/1live/musik/1live-plan-b/plan-b-donnerstagssendung-100.html'
+    ]
+
+    # As radio stations repeat tracks, we only care for unique tracks
+    unique_tracks = set()
+    for show in pages:
+        page = requests.get(show)
+        soup = BeautifulSoup(page.content, "html.parser")
+        tracks: ResultSet[PageElement] = soup.find_all('tr', class_='data')
+        print("done parsing einslive playlist. found {} rows".format(len(tracks)))
+
+        for single_track in tracks:
+            single_row = single_track.find_all('td', class_='entry')
+            artist = single_row[0].text
+            title = single_row[1].text
+            if (artist == 'Interpret' or title == 'Titel') or (artist == '' or title == ''):
+                # filter out headers and dividers
+                continue
+            unique_tracks.add((title, artist))
+    return unique_tracks
+
+
 def comma_separated_list(p_list):
     return ",".join(map(str, p_list))
 
@@ -61,6 +92,28 @@ def get_single_prop(prop_name):
 def persist_value(prop_name: str, value: str):
     cur.execute("INSERT INTO properties VALUES ('{}', '{}')".format(prop_name, value))
     con.commit()
+
+
+def get_deezer_auth_token():
+    db_token = cur.execute("SELECT prop_val FROM properties WHERE prop_name = 'token'").fetchone()
+    if db_token is not None:
+        return db_token[0]
+
+    print(
+        f"Please open https://connect.deezer.com/oauth/auth.php?app_id={app_Id}&redirect_uri={redirect_uri}&perms=basic_access,email,manage_library,delete_library,offline_access")
+    print("Afterwards, please paste the code into this terminal")
+    for line in fileinput.input():
+        auth_params = {
+            "app_id": app_Id,
+            "secret": app_secret,
+            "code": line.rstrip(),
+            "output": "json",
+        }
+        auth_response = requests.get("https://connect.deezer.com/oauth/access_token.php", params=auth_params)
+        new_token = json.loads(auth_response.content)["access_token"]
+        cur.execute("INSERT INTO properties VALUES ('token', '{}')".format(new_token))
+        con.commit()
+        return new_token
 
 
 def get_unofficial_tidal_client(p_session: tidalapi.Session):
@@ -99,6 +152,39 @@ def get_tidal_token():
     else:
         print("read token from storage")
         return json.loads(persisted_token[0])
+
+
+def find_deezer_track_ids(my_client: deezer.Client, parsed_tracks: set):
+    return_value = set()
+    for single_track in parsed_tracks:
+        quasi_sanitized_track = re.sub('[!?&]', '', single_track[0])
+        quasi_sanitized_artist = re.sub('[!?&]', '', single_track[1])
+        deezer_search_result: deezer.PaginatedList[deezer.Track] = my_client.search(track=quasi_sanitized_track,
+                                                                                    artist=quasi_sanitized_artist,
+                                                                                    strict=True)
+        if len(deezer_search_result) > 0:
+            return_value.add(deezer_search_result[0].id)
+    return return_value
+
+
+def get_track_ids_in_playlist(my_client: deezer.Client, playlist_id: str):
+    tracks = []
+    index = 0
+    while True:
+        playlist = my_client.request("GET", f"playlist/{playlist_id}/tracks?index={index}", paginate_list=True)
+        for track in playlist['data']:
+            tracks.append(track.id)
+        if 'next' in playlist.keys():
+            index += 25
+        else:
+            break
+    return tracks
+
+
+def delete_tracks_from_playlist(my_client: deezer.Client, playlist_id: str, track_ids: List[str]):
+    if len(track_ids) > 0:
+        for chunk in numpy.array_split(numpy.array(track_ids), 10):
+            my_client.request("DELETE", f"playlist/{playlist_id}/tracks", songs=comma_separated_list(chunk))
 
 
 def find_tidal_track_ids(parsed_tracks: list, auth: OAuth2Auth):
@@ -141,17 +227,19 @@ def find_tidal_track_ids(parsed_tracks: list, auth: OAuth2Auth):
     return return_value
 
 
-def update_playlist(playlist_name: str, prop_name: str, track_ids: set):
+def update_deezer_playlist(my_client: deezer.Client, playlist_name: str, prop_name: str, track_ids: set):
     playlist_id = get_single_prop(prop_name)
     if playlist_id is None:
         playlist_id = token.create_playlist(playlist_name)
+        playlist_object: deezer.Playlist = client.get_playlist(playlist_id)
         cur.execute("INSERT INTO properties VALUES ('{}', '{}')".format(prop_name, playlist_id))
         con.commit()
     else:
         playlist_id = playlist_id[0]
-        track_ids_to_delete = get_track_ids_in_playlist(playlist_id)
-        delete_tracks_from_playlist(playlist_id, track_ids_to_delete)
-    token.request("POST", f"playlist/{playlist_id}/tracks", songs=comma_separated_list(track_ids))
+        track_ids_to_delete = get_track_ids_in_playlist(my_client, playlist_id)
+        playlist_object: deezer.Playlist = client.get_playlist(playlist_id)
+        playlist_object.delete_tracks(track_ids_to_delete)
+    playlist_object.add_tracks(track_ids)
 
 
 def chunks(lst, n):
@@ -160,29 +248,47 @@ def chunks(lst, n):
         yield lst[i:i + n]
 
 
-dlf_nova_tracks = list(read_dlf_nova_tracks())
+def update_tidal_playlist(p_session: tidalapi.Session):
+    playlist_id = get_single_prop('tidal_playlist_id')
+    if playlist_id is None:
+        playlist = p_session.user.create_playlist("Deutschlandfunk Nova Playlist",
+                                                  "Nur ❤️ für den Deutschlandfunk und deren Musikkuratoren. Diese Playlist wird automatisch und regelmäßig mit der aktuellen Playlist von Deutschlandfunk Nova abgeglichen.")
+        persist_value('tidal_playlist_id', playlist.id)
+    else:
+        playlist = p_session.playlist(playlist_id[0])
+
+    no_of_tracks_in_playlist = len(playlist.tracks())
+    print("Purging existing {} tracks before adding new ones".format(no_of_tracks_in_playlist))
+    if no_of_tracks_in_playlist > 0:
+        playlist.remove_by_indices([idx for idx in range(no_of_tracks_in_playlist)])
+    time.sleep(10)
+
+    # add tracks to list in a chunked fashion
+    playlist = p_session.playlist(playlist_id)
+    for idx, chunk in enumerate(chunks(list(tidal_tracks), 10)):
+        playlist.add(chunk)
+        print("Successfully added chunk {}".format(idx))
+
+
+# ========= COMMON =========
+dlf_nova_tracks = read_dlf_nova_tracks()
+
+# ========= DEEZER =========
+token = get_deezer_auth_token()
+client = deezer.Client(access_token=token)
+
+# search for deezer track ids using the parsed results and update
+dlf_nova_track_ids = find_deezer_track_ids(client, dlf_nova_tracks)
+update_deezer_playlist(client, "Deutschlandfunk Nova Playlist", 'dlf_nova_playlist_id', dlf_nova_track_ids)
+
+einslive_track_ids = find_deezer_track_ids(client, read_einslive_plan_b_tracks())
+update_deezer_playlist(client, "1LIVE Plan B Playlist", 'einslive_plan_b_playlist_id', einslive_track_ids)
+
+# ========= TIDAL =========
 auth = OAuth2Auth(get_tidal_token())
-tidal_tracks = find_tidal_track_ids(dlf_nova_tracks, auth)
+tidal_tracks = find_tidal_track_ids(list(dlf_nova_tracks), auth)
 
 config = tidalapi.Config()
 session = tidalapi.Session(config)
 tidal_token = get_unofficial_tidal_client(session)
-playlist_id = get_single_prop('tidal_playlist_id')
-if playlist_id is None:
-    playlist = session.user.create_playlist("Deutschlandfunk Nova Playlist",
-                                            "Nur ❤️ für den Deutschlandfunk und deren Musikkuratoren. Diese Playlist wird automatisch und regelmäßig mit der aktuellen Playlist von Deutschlandfunk Nova abgeglichen.")
-    persist_value('tidal_playlist_id', playlist.id)
-else:
-    playlist = session.playlist(playlist_id[0])
-
-no_of_tracks_in_playlist = len(playlist.tracks())
-print("Purging existing {} tracks before adding new ones".format(no_of_tracks_in_playlist))
-if no_of_tracks_in_playlist > 0:
-    playlist.remove_by_indices([idx for idx in range(no_of_tracks_in_playlist)])
-time.sleep(10)
-
-# add tracks to list in a chunked fashion
-playlist = session.playlist(playlist_id)
-for idx, chunk in enumerate(chunks(list(tidal_tracks), 10)):
-    playlist.add(chunk)
-    print("Successfully added chunk {}".format(idx))
+update_tidal_playlist(session)
