@@ -90,6 +90,7 @@ def get_single_prop(prop_name):
 
 
 def persist_value(prop_name: str, value: str):
+    cur.execute("DELETE FROM properties WHERE prop_name = ?", [prop_name])
     cur.execute("INSERT INTO properties VALUES ('{}', '{}')".format(prop_name, value))
     con.commit()
 
@@ -138,20 +139,23 @@ def get_unofficial_tidal_client(p_session: tidalapi.Session):
 
 def get_tidal_token():
     persisted_token = get_single_prop('tidal_token')
-    if persisted_token is None:
-        print("getting new token")
-        token_endpoint = 'https://auth.tidal.com/v1/oauth2/token'
-        my_session = OAuth2Session(
-            tidal_app_Id,
-            tidal_app_secret,
-            token_endpoint_auth_method='client_secret_post'
-        )
-        token_value = my_session.fetch_token(token_endpoint)
-        persist_value('tidal_token', json.dumps(token_value))
-        return token_value
-    else:
+    if persisted_token is not None:
         print("read token from storage")
-        return json.loads(persisted_token[0])
+        token_object = json.loads(persisted_token[0])
+        if (token_object['expires_at']) > int(time.time()):
+            # only return token if it's valid, otherwise fetch a new one
+            return token_object
+
+    print("getting new token")
+    token_endpoint = 'https://auth.tidal.com/v1/oauth2/token'
+    my_session = OAuth2Session(
+        tidal_app_Id,
+        tidal_app_secret,
+        token_endpoint_auth_method='client_secret_post'
+    )
+    token_value = my_session.fetch_token(token_endpoint)
+    persist_value('tidal_token', json.dumps(token_value))
+    return token_value
 
 
 def find_deezer_track_ids(my_client: deezer.Client, parsed_tracks: set):
