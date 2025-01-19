@@ -85,6 +85,26 @@ class EinslivePlanB(RadioStationPlaylistPage):
         return unique_tracks
 
 
+class RadioEins(RadioStationPlaylistPage):
+    def __init__(self):
+        self.url = "https://www.radioeins.de/musik/playlists.html"
+
+    def get_tracks(self):
+        page = requests.get(self.url)
+        soup = BeautifulSoup(page.content, "html.parser")
+        tracks: ResultSet[PageElement] = soup.find_all('tr', class_='play_track')
+
+        print("done parsing radioeins playlist. found {} tracks".format(len(tracks)))
+
+        # As radio stations repeat tracks, we only care for unique tracks
+        unique_tracks = set()
+        for single_track in tracks:
+            title = single_track.find('span', class_='tracktitle').text
+            artist = single_track.find('span', class_='trackinterpret').text
+            unique_tracks.add((title, artist))
+        return unique_tracks
+
+
 class MusicServiceWorker:
     def update_playlists(self, playlist_name: str, playlist_id_row_id: str, tracks: set):
         pass
@@ -317,13 +337,16 @@ def chunks(lst, n):
 # ========= COMMON =========
 dlf_nova_tracks = DlfNova().get_tracks()
 einslive_plan_b_tracks = EinslivePlanB().get_tracks()
+radioeins_tracks = RadioEins().get_tracks()
 
 # ========= DEEZER =========
 deezer_worker = DeezerWorker()
 deezer_worker.update_playlists("Deutschlandfunk Nova Playlist", "dlf_nova_playlist_id", dlf_nova_tracks)
 deezer_worker.update_playlists("1LIVE Plan B Playlist", 'einslive_plan_b_playlist_id', einslive_plan_b_tracks)
+deezer_worker.update_playlists("RadioEins Playlist", 'deezer_radioeins_playlist_id', radioeins_tracks)
 
 # ========= TIDAL =========
 tidal_worker = TidalWorker()
 tidal_worker.update_playlists("Deutschlandfunk Nova Playlist", "tidal_dlf_nova_playlist_id", dlf_nova_tracks)
 tidal_worker.update_playlists("1LIVE Plan B Playlist", 'tidal_einslive_plan_b_playlist_id', einslive_plan_b_tracks)
+tidal_worker.update_playlists("RadioEins Playlist", 'tidal_radioeins_playlist_id', radioeins_tracks)
