@@ -265,7 +265,7 @@ class TidalWorker(MusicServiceWorker):
         return_value = set()
         total_tracks = len(parsed_tracks)
         for track_idx, single_track in enumerate(parsed_tracks):
-            query_string = ' '.join(single_track).replace(" feat. ", " ")
+            query_string = ' - '.join(single_track).replace(" feat. ", " ")
 
             cached_query = get_cached_track(query_string)
             if cached_query is not None:
