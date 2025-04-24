@@ -1,4 +1,8 @@
-# Deutschlandfunk Nova Playlist Syncer
+# Radio Station Playlist Syncer
+
+> [!WARNING]  
+> This repository was archived on 24.04.2025, since I made the switch towards Apple Music.
+> Tidal was flooded with AI-generated slops and haven't taken any measures against it yet.
 
 This project creates and syncs a playlist containing the last ~150 tracks from
 the [Deutschlandfunk Nova Playlist Site](https://www.deutschlandfunknova.de/playlist).
